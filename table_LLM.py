@@ -11,9 +11,9 @@ import base64
 from google import genai
 import enum
 from pydantic import BaseModel
+from environs import env
 
-
-
+env.read_env()
 
 
 def main():
@@ -22,8 +22,8 @@ def main():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/gmail.readonly"
     ]
-
-    genai_client = genai.Client(api_key=os.environ["GOOGLE_AI_API_KEY"])
+    
+    genai_client = genai.Client(api_key=env("GOOGLE_AI_API_KEY"))
 
     creds = authenticate_user(SCOPES)
 
@@ -70,7 +70,7 @@ def authenticate_user(SCOPES):
 def classify_email_LLM(genai_client, email_content):
 
     class Status(enum.Enum):
-        APPLIED_TO_NEW_JOB = "applied to a job"
+        NEW_JOB_APPLICATION = "new job application"
         REJECTION = "rejection"
         HOME_ASSIGMENT = "home assigment"
         INTERVIEW = "interview"
@@ -79,9 +79,10 @@ def classify_email_LLM(genai_client, email_content):
        
     response = genai_client.models.generate_content(
         model='gemini-2.5-flash',
-        contents=f'You are assisting in a system for tracking the job application process.\
-                    Based on the content of the following email,\
-                    classify its status into one of the categories\
+        contents=f'We are building a system for tracking the job application process.\
+                    Given the content of an email,\
+                    classify the current status of the applicant in the hiring pipeline.\
+                    there can be emails that are not related to the job search.\
                     email: {email_content}',
         config={
         'response_mime_type': 'text/x.enum',
@@ -100,6 +101,7 @@ def extract_entities_LLM(genai_client, email_content):
     response = genai_client.models.generate_content(
         model='gemini-2.5-flash',
         contents=f'Extract the job position and company name mentioned in the following email.\
+                    the position should have a title like: intern, junior, software engineer, QA, ect.\
                     If either detail is missing, write "Not specified".\
                     Email content: {email_content}',
         config={
@@ -148,8 +150,6 @@ def table_setup_old_mails(creds, sheet, genai_client):
                     headers = payload.get("headers", [])
                     subject = next((header["value"] for header in headers if header["name"] == "Subject"), "No Subject")
                     date = next((header["value"] for header in headers if header["name"] == "Date"), "No Date")
-                    sender = next((header["value"] for header in headers if header["name"] == "From"), "No Sender")
-                    sender_name = sender.split('@')[0].split('<')[0]
 
                     body = ""
                     if "body" in payload and "data" in payload["body"]:
@@ -173,12 +173,13 @@ def table_setup_old_mails(creds, sheet, genai_client):
 
 
                     email_content = f"Subject: {subject}\n\nBody: {body}"
-            
+                    not_companies = ["The open univesity", "Hackeriot", "GitHub", "Not specified"]
                     classification = classify_email_LLM(genai_client, email_content)
                     
-                    if classification == "applied to a job":
+                    if classification == "new job application":
                         position_name, company_name = extract_entities_LLM(genai_client, email_content)
-                        updates.append([position_name or "N/A", company_name or "N/A", classification, date])
+                        if company_name not in not_companies :
+                            updates.append([position_name, company_name, classification, date])
 
                 # Perform a batch update to the sheet
                 if updates:
@@ -198,6 +199,8 @@ def table_setup_old_mails(creds, sheet, genai_client):
         print(f"An error occurred: {error}")
     finally:
         print("Processing complete.")
+
+
 
 
 if __name__=="__main__":
