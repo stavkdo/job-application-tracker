@@ -6,3 +6,5 @@ google-generativeai
 pydantic
 environs
 python-dateutil
+functions-framework==3.*
+
