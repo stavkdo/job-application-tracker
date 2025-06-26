@@ -1,3 +1,4 @@
+functions-framework==3.*
 gspread
 google-api-python-client
 google-auth
@@ -6,5 +7,4 @@ google-generativeai
 pydantic
 environs
 python-dateutil
-functions-framework==3.*
 
