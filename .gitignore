@@ -42,6 +42,6 @@ credentials.json
 *.swp
 
 *.json
-*.txt
+checks.txt
 *.pickle
 

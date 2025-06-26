@@ -1,9 +1,7 @@
 import gspread
-from google.oauth2.service_account import Credentials
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
-from google.oauth2.credentials import Credentials as cCredentials
+from typing import Any
 import os
 import pickle
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -15,40 +13,14 @@ from environs import env
 from difflib import SequenceMatcher
 from dateutil.parser import parse
 from datetime import date, timedelta
-import schedule
-import time
-
 
 
 env.read_env()
 
 
+genai_client = genai.Client(api_key=env("GOOGLE_AI_API_KEY"))
 
-def main():
-    SCOPES = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/gmail.readonly"
-    ]
-    
-    genai_client = genai.Client(api_key=env("GOOGLE_AI_API_KEY"))
-
-    creds = authenticate_user(SCOPES)
-
-    client = gspread.authorize(creds)
-    
-    sheet = create_table(client)
-
-    table_setup_old_mails(creds, sheet, genai_client)
-
-    schedule.every().day.at("14:45").do(
-        lambda: daily_mail_routine(creds=creds, sheet=sheet, genai_client=genai_client))
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-
-def create_table(client):
+def create_table(client: gspread.Client) -> gspread.Worksheet:
     try:
         sheet = client.open("application tracker").sheet1
     except gspread.SpreadsheetNotFound:
@@ -62,7 +34,7 @@ def create_table(client):
         return sheet
 
 
-def authenticate_user(SCOPES):
+def authenticate_user(SCOPES: list[str]) -> Any:
     creds = None
     # Check if token.pickle exists (to store user credentials)
     if os.path.exists("token.pickle"):
@@ -82,7 +54,8 @@ def authenticate_user(SCOPES):
 
     return creds
 
-def classify_email_LLM(genai_client, email_content):
+
+def classify_email_LLM(genai_client: Any, email_content: str) -> str:
 
     class Status(enum.Enum):
         NEW_JOB_APPLICATION = "new job application"
@@ -108,7 +81,7 @@ def classify_email_LLM(genai_client, email_content):
     return response.text
 
 
-def extract_entities_LLM(genai_client, email_content):
+def extract_entities_LLM(genai_client: Any, email_content: str) -> tuple[str, str]:
     class Names(BaseModel):
         position_name: str
         comapny_name: str
@@ -129,7 +102,7 @@ def extract_entities_LLM(genai_client, email_content):
     return names.position_name, names.comapny_name
     
 
-def service_setup(creds):
+def service_setup(creds: Any) -> tuple[None | Any, None | str]:
     try:
         # Call the Gmail API
         service = build("gmail", "v1", credentials=creds)
@@ -154,8 +127,7 @@ def service_setup(creds):
 
 
 
-
-def email_config(message, service):
+def email_config(message: dict, service: Any) -> tuple[str, str]:
     msg = service.users().messages().get(userId="me", id=message["id"]).execute()
     payload = msg.get("payload", {})
     headers = payload.get("headers", [])
@@ -196,11 +168,11 @@ def email_config(message, service):
     return email_content, date_str
 
 
-def list_of_emails(service, inbox_id, after_date):
-    all_messages = []
+def list_of_emails(service: Any, inbox_id: str, after_date: str) -> list[dict]:
+    all_messages: list[dict] = []
     # Fetch messages from "All Mail" with pagination
     print("Fetching messages from inbox:")
-    next_page_token =None
+    next_page_token = None
     while True:
             inbox_messages = service.users().messages().list(
                 userId="me", labelIds=[inbox_id], maxResults=50, pageToken=next_page_token, q=f"after: {after_date}"
@@ -216,7 +188,7 @@ def list_of_emails(service, inbox_id, after_date):
     return all_messages
 
 
-def table_setup_old_mails(creds, sheet, genai_client):
+def table_setup_old_mails(creds: Any, sheet: gspread.Worksheet, genai_client: Any) -> None:
     updates = []  # Collect all updates in a list
     free_index = 2 #first free index in the table
     all_messages = []
@@ -263,11 +235,10 @@ def table_setup_old_mails(creds, sheet, genai_client):
         print(f"An error occurred: {error}")
     finally:
         print("Processing complete.")
-    return free_index # return the first free index for future updates
+    
 
 
-
-def daily_mail_routine(*, creds, sheet, genai_client):
+def daily_mail_routine(*, creds: Any, sheet: gspread.Worksheet, genai_client: Any) -> None:
     not_companies = ["The open univesity", "Hackeriot", "GitHub", "Not specified"]
     today_messages = []
     updates = []
@@ -307,14 +278,3 @@ def daily_mail_routine(*, creds, sheet, genai_client):
             sheet.update(range_name=range_to_update, values=updates)
             first_empty_cell += len(updates)  # Increment the starting row for the next batch
             updates.clear()
-
-    
-        
-
-
-
-
-if __name__=="__main__":
-    main()
-
-
