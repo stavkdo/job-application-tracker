@@ -12,12 +12,16 @@ from google import genai
 import enum
 from pydantic import BaseModel
 from environs import env
-import time
 from difflib import SequenceMatcher
 from dateutil.parser import parse
-from datetime import datetime
+from datetime import date, timedelta
+import schedule
+import time
+
+
 
 env.read_env()
+
 
 
 def main():
@@ -36,6 +40,12 @@ def main():
     sheet = create_table(client)
 
     table_setup_old_mails(creds, sheet, genai_client)
+
+    schedule.every().day.at("14:45").do(
+        lambda: daily_mail_routine(creds=creds, sheet=sheet, genai_client=genai_client))
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
 
 def create_table(client):
@@ -119,9 +129,7 @@ def extract_entities_LLM(genai_client, email_content):
     return names.position_name, names.comapny_name
     
 
-
-def table_setup_old_mails(creds, sheet, genai_client):
-    all_messages = []
+def service_setup(creds):
     try:
         # Call the Gmail API
         service = build("gmail", "v1", credentials=creds)
@@ -136,17 +144,66 @@ def table_setup_old_mails(creds, sheet, genai_client):
 
         if not inbox_id:
             print("inbox label not found.")
-            return
+            return None, None
+        
+        return service, inbox_id
+    
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+        return None, None
 
-        # Fetch messages from "All Mail" with pagination
-        print("Fetching messages from inbox:")
-        next_page_token = None
-        updates = []  # Collect all updates in a list
-        i = 2
 
-        while True:
+
+
+def email_config(message, service):
+    msg = service.users().messages().get(userId="me", id=message["id"]).execute()
+    payload = msg.get("payload", {})
+    headers = payload.get("headers", [])
+    subject = next((header["value"] for header in headers if header["name"] == "Subject"), "No Subject")
+    date = next((header["value"] for header in headers if header["name"] == "Date"), "No Date")
+    try:
+        date = date.split('(')[0]
+    except Exception as e:
+        date = date
+    finally:
+        date = parse(date)
+        date_str = date.strftime("%Y-%m-%d %H:%M:%S")
+    
+
+    body = ""
+    if "body" in payload and "data" in payload["body"]:
+        body = payload["body"]["data"]
+    elif "parts" in payload:
+        for part in payload["parts"]:
+            if "body" in part and "data" in part["body"]:
+                body = part["body"]["data"]
+                break
+
+    # Decode the body if it's Base64 encoded
+    if body:
+        try:
+            body = base64.urlsafe_b64decode(body).decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                body = base64.urlsafe_b64decode(body).decode("ISO-8859-1")
+            except Exception as e:
+                print(f"Failed to decode email body: {e}")
+                body = ""  # Set body to an empty string if decoding fails
+
+
+    email_content = f"Subject: {subject}\n\nBody: {body}"
+
+    return email_content, date_str
+
+
+def list_of_emails(service, inbox_id, after_date):
+    all_messages = []
+    # Fetch messages from "All Mail" with pagination
+    print("Fetching messages from inbox:")
+    next_page_token =None
+    while True:
             inbox_messages = service.users().messages().list(
-                userId="me", labelIds=[inbox_id], maxResults=50, pageToken=next_page_token, q="after: 2024/09/01"
+                userId="me", labelIds=[inbox_id], maxResults=50, pageToken=next_page_token, q=f"after: {after_date}"
             ).execute()
             if "messages" in inbox_messages:
                 all_messages.extend(inbox_messages["messages"])
@@ -156,81 +213,103 @@ def table_setup_old_mails(creds, sheet, genai_client):
             next_page_token = inbox_messages.get("nextPageToken")
             if not next_page_token:
                 break
-
-        for message in reversed(all_messages):
-                msg = service.users().messages().get(userId="me", id=message["id"]).execute()
-                payload = msg.get("payload", {})
-                headers = payload.get("headers", [])
-                subject = next((header["value"] for header in headers if header["name"] == "Subject"), "No Subject")
-                date = next((header["value"] for header in headers if header["name"] == "Date"), "No Date")
-                try:
-                    date = date.split('(')[0]
-                except Exception as e:
-                    date = date
-                finally:
-                    date = parse(date)
-                    date_str = date.strftime("%Y-%m-%d %H:%M:%S")
-                
-
-                body = ""
-                if "body" in payload and "data" in payload["body"]:
-                    body = payload["body"]["data"]
-                elif "parts" in payload:
-                    for part in payload["parts"]:
-                        if "body" in part and "data" in part["body"]:
-                            body = part["body"]["data"]
-                            break
-
-                # Decode the body if it's Base64 encoded
-                if body:
-                    try:
-                        body = base64.urlsafe_b64decode(body).decode("utf-8")
-                    except UnicodeDecodeError:
-                        try:
-                            body = base64.urlsafe_b64decode(body).decode("ISO-8859-1")
-                        except Exception as e:
-                            print(f"Failed to decode email body: {e}")
-                            body = ""  # Set body to an empty string if decoding fails
+    return all_messages
 
 
-                email_content = f"Subject: {subject}\n\nBody: {body}"
-                not_companies = ["The open univesity", "Hackeriot", "GitHub", "Not specified"]
-                classification = classify_email_LLM(genai_client, email_content)
-                
+def table_setup_old_mails(creds, sheet, genai_client):
+    updates = []  # Collect all updates in a list
+    free_index = 2 #first free index in the table
+    all_messages = []
 
-                if classification == "new job application":
-                    position_name, company_name = extract_entities_LLM(genai_client, email_content)
-                    if company_name not in not_companies:
-                        updates.append([position_name, company_name, classification, date_str, date_str])
-                elif classification != "not job related":
-                    position_name, company_name = extract_entities_LLM(genai_client, email_content)
-                    if company_name not in not_companies:
-                        updated = False
-                        for lst in reversed(updates):
-                            if (SequenceMatcher(None, lst[0], position_name).ratio() > 0.5 or position_name == "Not specified" or lst[0] == "Not specified")\
-                                and (SequenceMatcher(None, lst[1], company_name).ratio() > 0.7):
-                                lst[2] = classification
-                                lst[4] = date_str
-                                updated = True
-                                break
-                        if not updated:
+    try:
+        service, inbox_id = service_setup(creds)
+        if service and inbox_id:
+            all_messages = list_of_emails(service, inbox_id, "2024/09/01")
+
+        if all_messages:
+            for message in reversed(all_messages):
+                    
+                    email_content, date_str = email_config(message, service)
+                    
+                    not_companies = ["The open univesity", "Hackeriot", "GitHub", "Not specified"]
+                    classification = classify_email_LLM(genai_client, email_content)
+                    
+
+                    if classification == "new job application":
+                        position_name, company_name = extract_entities_LLM(genai_client, email_content)
+                        if company_name not in not_companies:
                             updates.append([position_name, company_name, classification, date_str, date_str])
+                    elif classification != "not job related":
+                        position_name, company_name = extract_entities_LLM(genai_client, email_content)
+                        if company_name not in not_companies:
+                            updated = False
+                            for lst in reversed(updates):
+                                if (SequenceMatcher(None, lst[0], position_name).ratio() > 0.5 or position_name == "Not specified" or lst[0] == "Not specified")\
+                                    and (SequenceMatcher(None, lst[1], company_name).ratio() > 0.7):
+                                    lst[2] = classification
+                                    lst[4] = date_str
+                                    updated = True
+                                    break
+                            if not updated:
+                                updates.append([position_name, company_name, classification, date_str, date_str])
         # Perform a batch update to the sheet
         if updates:
-            range_to_update = f"A{i}:E{len(updates) + i - 1}"  # Adjust the range based on the current row
+            range_to_update = f"A{free_index}:E{len(updates) + free_index - 1}"  # Adjust the range based on the current row
             sheet.update(range_name=range_to_update, values=updates)
-            i += len(updates)  # Increment the starting row for the next batch
+            free_index += len(updates)  # Increment the starting row for the next batch
             updates.clear()  # Clear the updates list
 
     except HttpError as error:
         print(f"An error occurred: {error}")
     finally:
         print("Processing complete.")
+    return free_index # return the first free index for future updates
 
 
 
-def daily_mail_routine(creds, sheet, model):
-    pass
+def daily_mail_routine(*, creds, sheet, genai_client):
+    not_companies = ["The open univesity", "Hackeriot", "GitHub", "Not specified"]
+    today_messages = []
+    updates = []
+    list_of_sheet_values = sheet.get_all_values() #one request to API, getting all info
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    yesterday_str = yesterday.strftime("%Y/%m/%d")
+    first_empty_cell = len(list_of_sheet_values)
+    
+
+    service, inbox_id = service_setup(creds)
+    if service and inbox_id:
+            today_messages = list_of_emails(service, inbox_id, yesterday_str) #getting today's messages from gmail
+    if today_messages:
+        for message in reversed(today_messages):
+                    email_content, date_str = email_config(message, service)
+                    classification = classify_email_LLM(genai_client, email_content)
+                    if classification == "new job application":
+                        position_name, company_name = extract_entities_LLM(genai_client, email_content)
+                        if company_name not in not_companies:
+                            updates.append([position_name, company_name, classification, date_str, date_str])
+                    elif classification != "not job related":
+                        position_name, company_name = extract_entities_LLM(genai_client, email_content)
+                        if company_name not in not_companies:
+                            for lst in reversed(list_of_sheet_values):
+                                updated = False
+                                if (SequenceMatcher(None, lst[0], position_name).ratio() > 0.5 or position_name == "Not specified" or lst[0] == "Not specified")\
+                                    and (SequenceMatcher(None, lst[1], company_name).ratio() > 0.7):
+                                    lst[2] = classification
+                                    lst[4] = date_str
+                                    updated = True
+                                    break
+                            if not updated:
+                                updates.append([position_name, company_name, classification, date_str, date_str])
+        if updates:
+            range_to_update = f"A{first_empty_cell}:E{len(updates) + first_empty_cell - 1}"  # Adjust the range based on the current row
+            sheet.update(range_name=range_to_update, values=updates)
+            first_empty_cell += len(updates)  # Increment the starting row for the next batch
+            updates.clear()
+
+    
+        
 
 
 
