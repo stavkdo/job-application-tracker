@@ -1,4 +1,4 @@
-functions-framework==3.*
+functions-framework==3.5.0
 gspread
 google-api-python-client
 google-auth
