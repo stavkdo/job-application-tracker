@@ -9,14 +9,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
 ]
 
-creds = authenticate_user(SCOPES)
-
-client = gspread.authorize(creds)
-
-sheet = create_table(client)
 
 
 def main():
+    creds = authenticate_user(SCOPES)
+    client = gspread.authorize(creds)
+    sheet = create_table(client)
     table_setup_old_mails(creds, sheet, genai_client)
 
     #schedule.every().day.at("14:45").do(
@@ -27,6 +25,9 @@ def main():
 
 
 def job_trigger(request):
+    creds = authenticate_user(SCOPES)
+    client = gspread.authorize(creds)
+    sheet = create_table(client)
     daily_mail_routine(creds=creds, sheet=sheet, genai_client=genai_client)
     print("executing job")
     return "Success", 200
