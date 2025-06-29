@@ -8,7 +8,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
 ]
 
-
 def main():
     creds = authenticate_user(SCOPES)
     client = gspread.authorize(creds)

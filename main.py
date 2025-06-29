@@ -1,7 +1,6 @@
 import os
 import gspread
 from table_LLM import genai_client, table_setup_old_mails, daily_mail_routine, authenticate_user, create_table
-import functions_framework
 from flask import Flask, Request
 
 
