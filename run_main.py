@@ -1,8 +1,5 @@
-import os
 import gspread
 from table_LLM import genai_client, table_setup_old_mails, daily_mail_routine, authenticate_user, create_table
-import functions_framework
-from flask import Flask, Request
 
 
 SCOPES = [
@@ -12,15 +9,17 @@ SCOPES = [
 ]
 
 
-app = Flask(__name__)
-
-@app.route("/", methods=["GET", "POST"])
-def job_trigger(request: Request):
+def main():
     creds = authenticate_user(SCOPES)
     client = gspread.authorize(creds)
     sheet = create_table(client)
-    daily_mail_routine(creds=creds, sheet=sheet, genai_client=genai_client)
-    print("executing job")
-    return "Success", 200
+    table_setup_old_mails(creds, sheet, genai_client)
 
+    #schedule.every().day.at("14:45").do(
+    #    lambda: daily_mail_routine(creds=creds, sheet=sheet, genai_client=genai_client))
+    #while True:
+    #    schedule.run_pending()
+    #    time.sleep(1)
 
+if __name__=="__main__":
+    main()
