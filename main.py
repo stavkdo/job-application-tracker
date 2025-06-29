@@ -1,5 +1,7 @@
 import gspread
 from table_LLM import genai_client, table_setup_old_mails, daily_mail_routine, authenticate_user, create_table
+import functions_framework
+
 
 
 
@@ -24,6 +26,7 @@ def main():
     #    time.sleep(1)
 
 
+@functions_framework.http
 def job_trigger(request):
     creds = authenticate_user(SCOPES)
     client = gspread.authorize(creds)
