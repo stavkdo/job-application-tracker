@@ -14,7 +14,7 @@ SCOPES = [
 app = Flask(__name__)
 
 @app.route("/", methods=["GET", "POST"])
-def job_trigger(request: Request):
+def job_trigger():
     creds = authenticate_user(SCOPES)
     client = gspread.authorize(creds)
     sheet = create_table(client)
