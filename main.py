@@ -1,7 +1,6 @@
-import os
+import functions_framework
 import gspread
-from table_LLM import genai_client, table_setup_old_mails, daily_mail_routine, authenticate_user, create_table
-from flask import Flask, Request
+from table_LLM import genai_client, daily_mail_routine, authenticate_user, create_table
 
 
 SCOPES = [
@@ -11,10 +10,9 @@ SCOPES = [
 ]
 
 
-app = Flask(__name__)
 
-@app.route("/", methods=["GET", "POST"])
-def job_trigger():
+@functions_framework.http
+def job_trigger(requst):
     creds = authenticate_user(SCOPES)
     client = gspread.authorize(creds)
     sheet = create_table(client)
@@ -22,7 +20,5 @@ def job_trigger():
     print("executing job")
     return "Success", 200
 
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+
+    
