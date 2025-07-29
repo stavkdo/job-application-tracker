@@ -12,8 +12,8 @@ SCOPES = [
 
 
 @functions_framework.http
-def job_trigger(requst):
-    creds = authenticate_user(SCOPES)
+def job_trigger(request):
+    creds = authenticate_user(SCOPES, True)
     client = gspread.authorize(creds)
     sheet = create_table(client)
     daily_mail_routine(creds=creds, sheet=sheet, genai_client=genai_client)

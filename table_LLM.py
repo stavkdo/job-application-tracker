@@ -1,5 +1,5 @@
 import gspread
-from googleapiclient.discovery import build, Resource
+from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import Any
 import os
@@ -13,6 +13,7 @@ from environs import env
 from difflib import SequenceMatcher
 from dateutil.parser import parse
 from datetime import date, timedelta
+import json
 
 
 env.read_env()
@@ -25,33 +26,43 @@ def create_table(client: gspread.Client) -> gspread.Worksheet:
         sheet = client.open("application tracker").sheet1
     except gspread.SpreadsheetNotFound:
         sheet = client.create("application tracker").sheet1
-    finally: 
         sheet.update_acell('A1',"Position Name")
         sheet.update_acell('B1',"Company Name")
         sheet.update_acell('C1',"Current Stage")
         sheet.update_acell('D1', "First Update")
         sheet.update_acell('E1',"Last Update")
+    finally: 
         return sheet
 
 
-def authenticate_user(SCOPES: list[str]) -> Any:
+def authenticate_user(SCOPES: list[str], using_cloud) -> Any:
     creds = None
-    # Check if token.pickle exists (to store user credentials)
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
 
-    # If no valid credentials, prompt the user to log in
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            "client_secret.json", SCOPES
-        )
-        creds = flow.run_local_server(port=0)
+    secret_json_str = env("GOOGLE_CLIENT_SECRET_JSON")
+    token_base64 = env("TOKEN_PICKLE_BASE64")
 
-        # Save the credentials for future use
-        with open("token.pickle", "wb") as token:
-            pickle.dump(creds, token)
+    with open("client_secret_temp.json", "w") as f:
+        json.dump(json.loads(secret_json_str), f)
 
+    with open("token.pickle", "wb") as token_file:
+        token_file.write(base64.b64decode(token_base64))
+
+    try:
+        if os.path.exists("token.pickle"):
+            with open("token.pickle", "rb") as token:
+                creds = pickle.load(token)
+
+        if (not creds or not creds.valid) and not using_cloud :
+            flow = InstalledAppFlow.from_client_secrets_file("client_secret_temp.json", SCOPES)
+            creds = flow.run_local_server(port=0, access_type='offline', include_granted_scopes='true')
+
+            with open("token.pickle", "wb") as token:
+                pickle.dump(creds, token)
+
+    finally:
+        if os.path.exists("client_secret_temp.json"):
+            os.remove("client_secret_temp.json")
+    print("creds done")
     return creds
 
 
@@ -246,7 +257,7 @@ def daily_mail_routine(*, creds: Any, sheet: gspread.Worksheet, genai_client: An
     today = date.today()
     yesterday = today - timedelta(days=1)
     yesterday_str = yesterday.strftime("%Y/%m/%d")
-    first_empty_cell = len(list_of_sheet_values)
+    first_empty_cell = len(list_of_sheet_values) + 1
     
 
     service, inbox_id = service_setup(creds)
@@ -278,3 +289,4 @@ def daily_mail_routine(*, creds: Any, sheet: gspread.Worksheet, genai_client: An
             sheet.update(range_name=range_to_update, values=updates)
             first_empty_cell += len(updates)  # Increment the starting row for the next batch
             updates.clear()
+    print("routine done")

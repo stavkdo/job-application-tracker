@@ -43,5 +43,6 @@ credentials.json
 
 *.json
 checks.txt
+token_base64.txt
 *.pickle
 
